@@ -1,0 +1,13 @@
+services:
+  costbot:
+    build: .
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - SLACK_WEBHOOK_URL
+    scale: 0
+timers:
+  daily:
+    service: costbot
+    schedule: 0 4 * * ?
+    command: costbot
