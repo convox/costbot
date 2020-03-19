@@ -37,5 +37,9 @@ github.com/aws/aws-sdk-go/service/costexplorer
 github.com/aws/aws-sdk-go/service/organizations
 github.com/aws/aws-sdk-go/service/sts
 github.com/aws/aws-sdk-go/service/sts/stsiface
+# github.com/jinzhu/now v1.1.1
+github.com/jinzhu/now
 # github.com/jmespath/go-jmespath v0.0.0-20180206201540-c2b33e8439af
 github.com/jmespath/go-jmespath
+# github.com/rodaine/table v1.0.0
+github.com/rodaine/table

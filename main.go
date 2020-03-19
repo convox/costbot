@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,14 +13,19 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/costexplorer"
 	"github.com/aws/aws-sdk-go/service/organizations"
+	"github.com/jinzhu/now"
+	"github.com/rodaine/table"
 )
 
 type Cost struct {
-	Name string
-	Cost float64
+	Account string
+	Name    string
+	Daily   float64
+	Monthly float64
 }
 
 type Payload struct {
@@ -65,9 +71,88 @@ func run() error {
 		accounts[*a.Id] = *a.Name
 	}
 
+	cd, err := costs("DAILY")
+	if err != nil {
+		return err
+	}
+
+	cm, err := costs("MONTHLY")
+	if err != nil {
+		return err
+	}
+
+	cs := []Cost{}
+
+	for k, v := range accounts {
+		cs = append(cs, Cost{
+			Account: k,
+			Name:    v,
+			Daily:   cd[k],
+			Monthly: cm[k],
+		})
+	}
+
+	sort.Slice(cs, func(i, j int) bool {
+		return cs[i].Monthly > cs[j].Monthly
+	})
+
+	var buf bytes.Buffer
+
+	t := table.New("Account", "Day", "Month").WithWriter(&buf)
+
+	for _, c := range cs {
+		t.AddRow(c.Name, fmt.Sprintf("%0.2f", c.Daily), fmt.Sprintf("%0.02f", c.Monthly))
+	}
+
+	t.Print()
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+
+	p := Payload{
+		Blocks: []PayloadBlock{
+			PayloadBlock{
+				Type: "section",
+				Text: PayloadText{
+					Type: "mrkdwn",
+					Text: fmt.Sprintf("*AWS Run Rate*\n```%s```", strings.Join(lines, "\n")),
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+
+	if _, err := http.Post(os.Getenv("SLACK_WEBHOOK_URL"), "application/json", bytes.NewReader(data)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func costs(granularity string) (map[string]float64, error) {
+	s, err := session.NewSession()
+	if err != nil {
+		return nil, err
+	}
+
+	start := time.Now().UTC()
+	end := time.Now().UTC()
+
+	switch granularity {
+	case "DAILY":
+		start = time.Now().UTC().Add(-1 * 24 * time.Hour)
+	case "MONTHLY":
+		start = now.With(start).BeginningOfMonth()
+	default:
+		return nil, fmt.Errorf("unknown granularity: %s", granularity)
+	}
+
 	ce := costexplorer.New(s)
 
-	res, err := ce.GetCostAndUsage(&costexplorer.GetCostAndUsageInput{
+	req := &costexplorer.GetCostAndUsageInput{
 		Granularity: aws.String("DAILY"),
 		GroupBy: []*costexplorer.GroupDefinition{
 			&costexplorer.GroupDefinition{
@@ -85,58 +170,39 @@ func run() error {
 			aws.String("UsageQuantity"),
 		},
 		TimePeriod: &costexplorer.DateInterval{
-			Start: aws.String(time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02")),
-			End:   aws.String(time.Now().UTC().Format("2006-01-02")),
+			Start: aws.String(start.Format("2006-01-02")),
+			End:   aws.String(end.Format("2006-01-02")),
 		},
-	})
-	if err != nil {
-		return err
 	}
 
-	costs := []Cost{}
+	ctx := context.Background()
 
-	for _, g := range res.ResultsByTime[0].Groups {
-		cost, err := strconv.ParseFloat(*g.Metrics["AmortizedCost"].Amount, 64)
-		if err != nil {
-			return err
+	p := request.Pagination{
+		NewRequest: func() (*request.Request, error) {
+			r, _ := ce.GetCostAndUsageRequest(req)
+			r.SetContext(ctx)
+			return r, nil
+		},
+	}
+
+	costs := map[string]float64{}
+
+	for p.Next() {
+		res := p.Page().(*costexplorer.GetCostAndUsageOutput)
+
+		for _, rt := range res.ResultsByTime {
+			for _, g := range rt.Groups {
+				cost, err := strconv.ParseFloat(*g.Metrics["AmortizedCost"].Amount, 64)
+				if err != nil {
+					return nil, err
+				}
+
+				if cost > 0 {
+					costs[*g.Keys[0]] += cost
+				}
+			}
 		}
-
-		costs = append(costs, Cost{
-			Name: accounts[*g.Keys[0]],
-			Cost: cost,
-		})
 	}
 
-	sort.Slice(costs, func(i, j int) bool {
-		return costs[i].Cost > costs[j].Cost
-	})
-
-	lines := []string{}
-
-	for _, c := range costs {
-		lines = append(lines, fmt.Sprintf("%20s: %0.2f", c.Name, c.Cost))
-	}
-
-	p := Payload{
-		Blocks: []PayloadBlock{
-			PayloadBlock{
-				Type: "section",
-				Text: PayloadText{
-					Type: "mrkdwn",
-					Text: fmt.Sprintf("*AWS Daily Run Rate*\n```%s```", strings.Join(lines, "\n")),
-				},
-			},
-		},
-	}
-
-	data, err := json.Marshal(p)
-	if err != nil {
-		return err
-	}
-
-	if _, err := http.Post(os.Getenv("SLACK_WEBHOOK_URL"), "application/json", bytes.NewReader(data)); err != nil {
-		return err
-	}
-
-	return nil
+	return costs, nil
 }
