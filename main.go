@@ -17,7 +17,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/costexplorer"
 	"github.com/aws/aws-sdk-go/service/organizations"
-	"github.com/jinzhu/now"
 	"github.com/rodaine/table"
 )
 
@@ -108,6 +107,11 @@ func run() error {
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 
+	// for _, l := range lines {
+	// 	fmt.Println(l)
+	// }
+	// return nil
+
 	p := Payload{
 		Blocks: []PayloadBlock{
 			PayloadBlock{
@@ -145,7 +149,8 @@ func costs(granularity string) (map[string]float64, error) {
 	case "DAILY":
 		start = time.Now().UTC().Add(-1 * 24 * time.Hour)
 	case "MONTHLY":
-		start = now.With(start).BeginningOfMonth()
+		start = time.Now().UTC().Add(-30 * 24 * time.Hour)
+		// start = now.With(start).BeginningOfMonth()
 	default:
 		return nil, fmt.Errorf("unknown granularity: %s", granularity)
 	}
