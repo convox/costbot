@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/costexplorer"
 	"github.com/aws/aws-sdk-go/service/organizations"
+	"github.com/jinzhu/now"
 	"github.com/rodaine/table"
 )
 
@@ -154,6 +155,9 @@ func costs(granularity string) (map[string]float64, error) {
 	default:
 		return nil, fmt.Errorf("unknown granularity: %s", granularity)
 	}
+
+	start = now.With(start).BeginningOfDay()
+	end = now.With(end).BeginningOfDay()
 
 	ce := costexplorer.New(s)
 
